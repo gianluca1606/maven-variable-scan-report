@@ -1,27 +1,39 @@
+import html.HtmlTemplateUtil
+import html.TableRowData
 import org.apache.maven.plugin.AbstractMojo
 import org.apache.maven.plugins.annotations.Mojo
 import org.apache.maven.plugins.annotations.Parameter
+import org.apache.maven.project.MavenProject
 import java.io.File
+import java.nio.file.Path
 
 
 @Mojo(name = "scan")
 class ScanMojo : AbstractMojo() {
 
+    @Parameter(property = "version")
+    private lateinit var version: String
+
+    @Parameter(defaultValue = "\${project}", readonly = true, required = true)
+    private lateinit var project: MavenProject
+
     @Parameter(property = "packageConfigs")
     private lateinit var packageConfigs: List<PackageConfig>
 
-    @Parameter(property = "outputDirectory", defaultValue = "\${project.build.directory}/reports")
+    @Parameter(property = "outputDirectory", defaultValue = "\${project.build.directory}/var-scanner-reports")
     private lateinit var outputDirectory: File
 
     override fun execute() {
-        val generalVarsReport: MutableMap<String, MutableSet<String>> = mutableMapOf()
+        val templateData = mutableMapOf<String, Any>()
+        val totalVarsReport: MutableMap<String, MutableSet<String>> = mutableMapOf()
+        val tableRows = mutableListOf<TableRowData>()
 
         if (outputDirectory.exists()) {
             outputDirectory.deleteRecursively()
         }
         outputDirectory.mkdirs()
         packageConfigs.forEach { config ->
-            val setForPackage = mutableSetOf<String>()
+            val allVariablesForPackage = mutableSetOf<String>()
             val pkgDir = File("src/main/java", config.packageName.replace('.', '/'))
             if (!pkgDir.exists()) {
                 log.warn("Package directory not found: ${config.packageName}")
@@ -41,22 +53,30 @@ class ScanMojo : AbstractMojo() {
                                 val parts = capturedString.split("=")
                                 if (parts.size >= 2) {
                                     val variableName = parts[0].trim() // Extract and trim variable name
-                                    setForPackage.add(variableName)
-                                    HtmlUtil.generateReport(
-                                        config.packageName,
-                                        config.heading ?: config.packageName,
-                                        file.name,
-                                        variableName,
-                                        lineNumber,
-                                        outputDirectory
+                                    allVariablesForPackage.add(variableName)
+                                    tableRows.add(
+                                        TableRowData(
+                                            config.packageName,
+                                            file.name,
+                                            variableName,
+                                            lineNumber
+                                        )
                                     )
                                 }
                             }
                         }
                     }
                 }
-            generalVarsReport[config.packageName] = setForPackage
+            totalVarsReport[config.heading ?: config.packageName] = allVariablesForPackage
         }
+        templateData.put("projectId", project.id)
+        templateData.put("projectName", project.name)
+        templateData.put("projectVersion", version ?: project.version)
+
+        templateData.put("tableRows", tableRows)
+        templateData.put("totalVarsReport", totalVarsReport)
+
+        HtmlTemplateUtil.generate(templateData, Path.of(outputDirectory.absolutePath, "index.html"), log)
     }
 
 }
